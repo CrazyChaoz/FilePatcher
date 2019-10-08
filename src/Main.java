@@ -1,4 +1,8 @@
-import java.io.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
 import java.nio.file.Paths;
 import java.util.Set;
 import java.util.TreeSet;
@@ -23,24 +27,73 @@ public class Main {
 			File[] unPatchedFiles = unPatchedDirectory.listFiles();
 
 			for (int fileCounter = 0; patchedFiles.length > fileCounter; fileCounter++) {
-//				if (!Arrays.equals(Files.readAllBytes(patchedFiles[fileCounter].toPath()), Files.readAllBytes(unPatchedFiles[fileCounter].toPath())))
-
 
 				ChangedFile changedFile = new ChangedFile(patchedFiles[fileCounter].getName());
 
-				InputStream file0In = new BufferedInputStream(new FileInputStream(patchedFiles[fileCounter]));
-				InputStream file1In = new BufferedInputStream(new FileInputStream(unPatchedFiles[fileCounter]));
+				FileInputStream file0In = new FileInputStream(patchedFiles[fileCounter]);
+				FileInputStream file1In = new FileInputStream(unPatchedFiles[fileCounter]);
 
 
-				int i0, i1;
+
+
+				int i0, i1, lookahead0 = 0, lookahead1 = 0;
+				int maxlookahead = 10;
 				long position = 0;
-				long differentSincePosition=0;
 
 				while ((i0 = file0In.read()) != -1) {
 					if ((i1 = file1In.read()) != -1) {
-						if(i0!=i1){
+
+						if (i0 != i1) {
 							//replace
-							changedFile.addChange(ChangeType.CHANGE, position, (byte) i0);
+//							changedFile.addChange(ChangeType.CHANGE, position, (byte) i0);
+
+
+							FileChannel fc0 = file0In.getChannel();
+							FileChannel fc1 = file1In.getChannel();
+
+							long startpos0=fc0.position();
+							long startpos1=fc1.position();
+
+							lookaheadloop:
+							for (lookahead0=0; lookahead0 < maxlookahead; lookahead0++) {
+								for (lookahead1=0; lookahead1 < maxlookahead; lookahead1++) {
+									if (Channels.newInputStream(fc0).read() == Channels.newInputStream(fc1).read()) {
+										break lookaheadloop;
+									}
+									fc1.position(fc1.position() + 1);
+								}
+								fc0.position(fc0.position() + 1);
+							}
+
+							System.out.println("file0 needs to move " + lookahead0);
+							System.out.println("file1 needs to move " + lookahead1);
+
+
+							fc0.position(startpos0);
+							fc1.position(startpos1);
+
+
+							lookaheadloop2:
+							for (lookahead0=0; lookahead0 < maxlookahead; lookahead0++) {
+								for (lookahead1=0; lookahead1 < maxlookahead; lookahead1++) {
+									if (Channels.newInputStream(fc0).read() == Channels.newInputStream(fc1).read()) {
+										break lookaheadloop2;
+									}
+									fc0.position(fc0.position() + 1);
+								}
+								fc1.position(fc1.position() + 1);
+							}
+
+							System.out.println("file0 needs to move " + lookahead0);
+							System.out.println("file1 needs to move " + lookahead1);
+
+
+							fc0.position(startpos0-1);
+							fc1.position(startpos1-1);
+
+							changedFile.addChange(lookahead0 < lookahead1 ? ChangeType.ADD:ChangeType.DELETE, position, (byte) (lookahead0 < lookahead1 ? Channels.newInputStream(fc0).read() : Channels.newInputStream(fc1).read()));
+
+
 						}
 					} else {
 						changedFile.addChange(ChangeType.ADD, position, (byte) i0);
@@ -50,7 +103,7 @@ public class Main {
 				}
 
 				while ((i1 = file1In.read()) != -1) {
-						changedFile.addChange(ChangeType.ADD, position, (byte) i1);
+					changedFile.addChange(ChangeType.DELETE, position++, (byte) i1);
 				}
 
 
@@ -62,6 +115,12 @@ public class Main {
 //				threadies.execute(() -> {});
 
 
+				///////////////////////////////
+				///////////////////////////////
+				new ChangeApplier(changedFile);
+				///////////////////////////////
+				///////////////////////////////
+
 			}
 
 
@@ -70,58 +129,13 @@ public class Main {
 	}
 }
 
-class ChangedFile implements Comparable<ChangedFile> {
-
-	String fileName;
-	private Set<Change> changes = new TreeSet<>();
 
 
-	public ChangedFile(String fileName) {
-		this.fileName = fileName;
-	}
 
-	public void addChange(ChangeType type,long position, byte data){
-		changes.add(new Change(position, type, data));
-	}
 
-	@Override
-	public int compareTo(ChangedFile o) {
-		return fileName.compareTo(o.fileName);
-	}
 
-	@Override
-	public String toString() {
-		return "ChangedFile{" +
-				"fileName='" + fileName + '\'' +
-				", changes=" + changes +
-				'}';
-	}
-}
-enum ChangeType{
-	ADD,DELETE,CHANGE
-}
-class Change implements Comparable<Change>{
-	public long position;
-	public ChangeType type;
-	public byte data;
 
-	public Change(long position, ChangeType type, byte data) {
-		this.position = position;
-		this.type = type;
-		this.data = data;
-	}
 
-	@Override
-	public int compareTo(Change o) {
-		return (int)((position-o.position)%Integer.MAX_VALUE); //FIXME: error when add/delete on same position
-	}
 
-	@Override
-	public String toString() {
-		return "Change{" +
-				"position=" + position +
-				", type=" + type +
-				", data=" + data +
-				'}';
-	}
-}
+
+
